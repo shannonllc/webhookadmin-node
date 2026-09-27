@@ -1,0 +1,5 @@
+allowBuilds:
+  esbuild: true
+  workerd: true
+minimumReleaseAgeExclude:
+  - miniflare@5.20260925.0-alpha
