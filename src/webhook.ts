@@ -1,4 +1,4 @@
-// 受け取る側の署名の検証（Standard Webhooks）。packages/core/src/sign.ts の署名と対になる。
+// 受け取る側の署名の検証（Standard Webhooks）。サーバーが送るときの署名と同じ形。
 //   webhook-id / webhook-timestamp（秒）/ webhook-signature: "v1,<base64>"（鍵の切り替え中は空白区切りで複数）
 //   署名する内容は `${id}.${timestamp}.${body}`、鍵は whsec_ の後ろを base64 で戻したもの。
 import { WebhookAdminError, WebhookVerificationError } from './errors';

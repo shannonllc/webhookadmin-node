@@ -48,12 +48,14 @@ describe('Webhook.verify', () => {
   });
 
   it('the official library accepts what Webhook.sign produces', async () => {
-    const at = new Date();
+    // 署名した時刻とヘッダーの時刻は同じ値を使う（別々に取ると、間で秒が切り替わったときに一致しない）
+    const sec = nowSec();
+    const at = new Date(sec * 1000);
     const sig = await new Webhook(SECRET).sign('msg_2', at, body);
-    const h = { 'webhook-id': 'msg_2', 'webhook-timestamp': String(nowSec()), 'webhook-signature': sig };
+    const h = { 'webhook-id': 'msg_2', 'webhook-timestamp': String(sec), 'webhook-signature': sig };
     expect(new Official(SECRET).verify(body, h)).toEqual(JSON.parse(body));
     expect(sig).toBe(new Official(SECRET).sign('msg_2', at, body));
-    expect(await new Webhook(SECRET).sign('msg_2', nowSec(), body)).toBe(sig);
+    expect(await new Webhook(SECRET).sign('msg_2', sec, body)).toBe(sig);
   });
 
   it('agrees with the official library on the same inputs', async () => {
@@ -122,6 +124,8 @@ describe('Webhook.verify', () => {
       );
     expect(await msg(wh.verify(body, {}))).toBe('WebhookVerificationError: Missing required headers');
     expect(await msg(wh.verify(body, new Headers()))).toBe('WebhookVerificationError: Missing required headers');
+    for (const name of ['webhook-timestamp', 'webhook-signature'])
+      expect(await msg(wh.verify(body, { ...h, [name]: undefined }))).toBe('WebhookVerificationError: Missing required headers');
     expect(await msg(wh.verify(body, { ...h, 'webhook-timestamp': '1e9' }))).toBe(
       'WebhookVerificationError: Invalid webhook-timestamp header',
     );

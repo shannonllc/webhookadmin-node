@@ -1,6 +1,6 @@
 {
   "name": "webhookadmin",
-  "version": "0.1.0",
+  "version": "0.4.1",
   "description": "Node.js / TypeScript SDK for Webhook Admin: send webhooks, manage endpoints and verify signatures.",
   "keywords": [
     "webhook",
@@ -43,6 +43,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {

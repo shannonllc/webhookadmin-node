@@ -3,6 +3,7 @@ import { type Fetch, Http } from './http';
 import { Consumers } from './resources/consumers';
 import { Deliveries } from './resources/deliveries';
 import { Endpoints } from './resources/endpoints';
+import { EventTypes } from './resources/event-types';
 import { Messages } from './resources/messages';
 import { Portal } from './resources/portal';
 import { readEnv } from './runtime';
@@ -23,12 +24,27 @@ export interface ClientOptions {
   fetch?: Fetch;
 }
 
+/** @internal The HTTP layer shared by the client and the poller. `credential` is sent as `Authorization: Bearer …`. */
+export function createHttp(credential: string, options: ClientOptions): Http {
+  const f = options.fetch ?? (globalThis as { fetch?: Fetch }).fetch;
+  if (!f) throw new WebhookAdminError('fetch is not available. Use Node.js 18 or later, or pass options.fetch.');
+  return new Http({
+    apiKey: credential,
+    baseUrl: (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, ''),
+    timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
+    maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
+    // 素の fetch を this なしで呼ぶと Workers などで Illegal invocation になる
+    fetch: options.fetch ?? ((input, init) => f(input, init)),
+  });
+}
+
 /** Client for the Webhook Admin API (`/v1`). */
 export class WebhookAdmin {
   readonly messages: Messages;
   readonly consumers: Consumers;
   readonly endpoints: Endpoints;
   readonly deliveries: Deliveries;
+  readonly eventTypes: EventTypes;
   readonly portal: Portal;
   readonly baseUrl: string;
 
@@ -40,21 +56,13 @@ export class WebhookAdmin {
     if (!key) {
       throw new WebhookAdminError(`Missing API key. Pass it to new WebhookAdmin('sk_…') or set ${API_KEY_ENV}.`);
     }
-    const f = options.fetch ?? (globalThis as { fetch?: Fetch }).fetch;
-    if (!f) throw new WebhookAdminError('fetch is not available. Use Node.js 18 or later, or pass options.fetch.');
-    this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
-    const http = new Http({
-      apiKey: key,
-      baseUrl: this.baseUrl,
-      timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
-      maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
-      // 素の fetch を this なしで呼ぶと Workers などで Illegal invocation になる
-      fetch: options.fetch ?? ((input, init) => f(input, init)),
-    });
+    const http = createHttp(key, options);
+    this.baseUrl = http.config.baseUrl;
     this.messages = new Messages(http);
     this.consumers = new Consumers(http);
     this.endpoints = new Endpoints(http);
     this.deliveries = new Deliveries(http);
+    this.eventTypes = new EventTypes(http);
     this.portal = new Portal(http);
   }
 }
