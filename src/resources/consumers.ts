@@ -11,6 +11,14 @@ export class Consumers {
     return this.http.request({ method: 'POST', path: '/v1/consumers', body: params, idempotent: false }, options);
   }
 
+  /**
+   * Deletes a consumer with its endpoints (signing secrets, transformations, poller tokens) and the sources that deliver to it.
+   * Portal links stop working and deliveries not yet sent are not sent. A missing consumer throws `NotFoundError`. Requires `consumers:write`.
+   */
+  async delete(consumerId: string, options?: RequestOptions): Promise<void> {
+    await this.http.request({ method: 'DELETE', path: `/v1/consumers/${encodeURIComponent(consumerId)}`, idempotent: true }, options);
+  }
+
   /** Lists consumers. Requires `logs:read`. */
   list(params: ConsumerListParams = {}, options?: RequestOptions): PagePromise<Consumer> {
     const { cursor, ...query } = params;

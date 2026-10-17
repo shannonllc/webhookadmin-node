@@ -1,4 +1,4 @@
-// 取りに来る送信先（type: polling）を、受け取る側が読む。API キーではなく送信先ごとのトークン（sk_poll_…）で GET /v1/poller/{id} を呼ぶ。
+// ポーリングの送信先（type: polling）を、受け取る側が読む。API キーではなく送信先ごとのトークン（sk_poll_…）で GET /v1/poller/{id} を呼ぶ。
 import { type ClientOptions, createHttp } from './client';
 import { WebhookAdminError } from './errors';
 import type { Http } from './http';

@@ -73,7 +73,8 @@ export class Endpoints {
   /**
    * Resends every delivery to this endpoint that ended `failed`, for messages created at or after `since`,
    * as the same messages (same `webhook-id`). Runs in the background; check it with `recovery()`.
-   * The endpoint must be `active`. Requires `messages:retry`.
+   * The endpoint must be `active`: a disabled endpoint throws `ConflictError` with code `endpoint_disabled`,
+   * a paused one `ConflictError` with code `conflict`. Requires `messages:retry`.
    */
   recover(endpointId: string, params: RecoverParams, options?: RequestOptions): Promise<Recovery> {
     return this.http.request({ method: 'POST', path: path(endpointId, '/recover'), body: params, idempotent: false }, options);
@@ -87,7 +88,10 @@ export class Endpoints {
     );
   }
 
-  /** Sends a test message to this endpoint only. Not counted in usage. Requires `messages:send`. */
+  /**
+   * Sends a test message to this endpoint only. Not counted in usage. A disabled endpoint throws `ConflictError`
+   * with code `endpoint_disabled`. Requires `messages:send`.
+   */
   sendTest(endpointId: string, params: EndpointSendTestParams = {}, options?: RequestOptions): Promise<SendTestResponse> {
     return this.http.request({ method: 'POST', path: path(endpointId, '/test'), body: params, idempotent: false }, options);
   }

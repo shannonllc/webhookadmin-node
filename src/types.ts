@@ -8,8 +8,12 @@ export interface Page<T> {
   next_cursor: string | null;
 }
 
-/** `cancelled`: every delivery of the message was cancelled by a transformation. */
-export type MessageStatus = 'pending' | 'retrying' | 'success' | 'failed' | 'cancelled';
+/**
+ * `cancelled`: every delivery of the message was cancelled by a transformation.
+ * `no_endpoint`: the consumer had no endpoint for the message when it was accepted. The message is stored but not sent
+ * (not even if an endpoint is added later) and is not counted toward the monthly quota.
+ */
+export type MessageStatus = 'pending' | 'retrying' | 'success' | 'failed' | 'cancelled' | 'no_endpoint';
 /**
  * `held` means the endpoint is paused; sent when it is set back to `active`.
  * `cancelled` means the endpoint's transformation set `cancel: true` (not a failure; not retried).
@@ -47,7 +51,7 @@ export interface Attempt {
   duration_ms: number;
   error: string | null;
   /**
-   * `direct` or `relay` for webhooks; the destination type (such as `sqs`) for other destinations, also when sent through the relay.
+   * `direct` or `relay` for webhooks; the destination type (such as `sqs` or `slack`) for other destinations, also when sent through the relay.
    * `poll` for a polling endpoint: `at` is when the receiver fetched the message.
    */
   via: 'direct' | 'relay' | 'poll' | DestinationType;
@@ -55,7 +59,10 @@ export interface Attempt {
   source_ip: string | null;
   /** `changed` when the endpoint's transformation changed the request, `error` when it failed (nothing was sent). */
   transform: 'changed' | 'error' | null;
-  /** ID returned by a destination other than a webhook (SQS MessageId, object key, Kafka partition:offset and so on). */
+  /**
+   * ID returned by a destination other than a webhook (SQS MessageId, object key, Kafka partition:offset, Chatwork message_id
+   * and so on). `null` for `slack` and `teams`.
+   */
   ref: string | null;
 }
 
@@ -68,6 +75,11 @@ export interface Delivery {
   /** Unix milliseconds, or `null` when no retry is scheduled. */
   next_attempt_at: number | null;
   attempts: Attempt[];
+  /**
+   * The endpoint's current status, or `null` if it was deleted. A delivery to a `disabled` or deleted endpoint
+   * cannot be retried. Returned since 2026-10-17.
+   */
+  endpoint_status?: EndpointStatus | null;
 }
 
 export interface Message {
@@ -80,6 +92,8 @@ export interface Message {
   /** The payload as sent. `null` if it is no longer stored. */
   payload: unknown;
   deliveries: Delivery[];
+  /** The source the message was received from, with its name at that time. `null` for messages sent with `messages.send()`. */
+  source: SourceRef | null;
 }
 
 export interface SendMessageParams {
@@ -242,11 +256,26 @@ export interface Endpoint {
 }
 
 /** Destinations other than webhooks. */
-export type DestinationType = 'sqs' | 'eventbridge' | 'pubsub' | 's3' | 'r2' | 'gcs' | 'azure_blob' | 'servicebus' | 'kafka' | 'rabbitmq';
+export type DestinationType =
+  | 'sqs'
+  | 'eventbridge'
+  | 'pubsub'
+  | 's3'
+  | 'r2'
+  | 'gcs'
+  | 'azure_blob'
+  | 'servicebus'
+  | 'kafka'
+  | 'rabbitmq'
+  | 'slack'
+  | 'teams'
+  | 'chatwork';
 
 /**
  * `http` sends to `url` (webhooks). `polling` has no URL: the receiver fetches messages with a poller token (see `Poller`).
- * Other types send to a queue, event bus or object storage (Pro plan and above).
+ * Other types send to a queue, event bus, object storage or chat (Pro plan and above). `slack`, `teams` and `chatwork` post a chat
+ * message instead of the JSON body and are not signed: the message uses the `data` fields `text` (required for this form), and
+ * optionally `title`, `lines` (strings) and `link` (https URL); otherwise the title is the event type and the body is `data` as JSON.
  */
 export type EndpointType = 'http' | 'polling' | DestinationType;
 
@@ -259,6 +288,7 @@ export interface AwsStyleCredentials {
 /**
  * Settings of a destination other than a webhook. The hosts are the providers' official endpoints built from these values,
  * except `kafka` and `rabbitmq`, which take an https `url`. Optional values have the defaults shown.
+ * `slack` and `teams` have no settings: pass only `credentials` (`{ credentials: { webhook_url } }`).
  */
 export type DestinationConfig =
   | SqsDestination
@@ -267,7 +297,8 @@ export type DestinationConfig =
   | ObjectDestination
   | { namespace: string; entity: string }
   | { url: string; cluster_id: string; topic: string }
-  | RabbitMqDestination;
+  | RabbitMqDestination
+  | ChatworkDestination;
 
 export interface SqsDestination {
   region: string;
@@ -306,6 +337,11 @@ export interface RabbitMqDestination {
   routing_key?: string;
 }
 
+export interface ChatworkDestination {
+  /** Chatwork room ID (digits). */
+  room_id: string;
+}
+
 /** Credentials, write-only. The API never returns them. */
 export type DestinationCredentials =
   | AwsStyleCredentials
@@ -313,7 +349,18 @@ export type DestinationCredentials =
   | { account_key: string }
   | { key_name: string; key: string }
   | { api_key: string; api_secret: string }
-  | { username: string; password: string };
+  | { username: string; password: string }
+  | ChatWebhookCredentials
+  | { api_token: string };
+
+/**
+ * `slack`: a Slack Incoming Webhook URL (`https://hooks.slack.com/services/T…/B…/…`).
+ * `teams`: a Teams Workflows URL ("When a Teams webhook request is received", on `*.powerplatform.com` or `*.logic.azure.com`);
+ * Office 365 connector URLs (`webhook.office.com`) are not accepted.
+ */
+export interface ChatWebhookCredentials {
+  webhook_url: string;
+}
 
 /** Pub/Sub, and GCS instead of an HMAC key. */
 export interface ServiceAccountCredentials {
@@ -430,7 +477,10 @@ export interface Transformation {
   updated_at: number;
   /** `false` keeps the code but does not apply it. */
   enabled: boolean;
-  /** Read-only values for the code, as `webhook.env`. `null` when none. */
+  /**
+   * Read-only values for the code, as `webhook.env`. `null` when none. Values are returned only to keys with
+   * `endpoints:write`; other keys get the names with each value hidden as `••••` (sending `••••` back keeps the saved value).
+   */
   variables: Record<string, string> | null;
 }
 
@@ -608,6 +658,175 @@ export interface EnsureEventTypesResult {
   created: EventType[];
   /** Event types that already existed, as they are stored. */
   existing: EventType[];
+}
+
+/**
+ * How a source verifies the webhooks it receives. `stripe`, `github`, `shopify`, `slack`, `meta` and `zoom` check each service's
+ * signature (`meta` also answers the subscription check with `config.verify_token`, and `zoom` answers its URL validation),
+ * `standard` checks the Standard Webhooks headers, `hmac` checks an HMAC-SHA256 of the body in the header set in `config.header`,
+ * `basic` checks Basic authentication (`config.username` and the secret as the password), `api_key` checks the secret in the
+ * header `config.header` or the query parameter `config.query`, and `none` does not verify.
+ */
+export type SourceProvider =
+  | 'stripe'
+  | 'github'
+  | 'shopify'
+  | 'slack'
+  | 'meta'
+  | 'zoom'
+  | 'standard'
+  | 'hmac'
+  | 'basic'
+  | 'api_key'
+  | 'none';
+
+/**
+ * `paused` still accepts webhooks (after verifying them) and holds them; they become messages when the source is set back to
+ * `active`. `Source.held` is the number waiting.
+ */
+export type SourceStatus = 'active' | 'paused';
+
+/** What a source answers when it accepts a webhook. */
+export interface SourceResponse {
+  /** 200 to 299. Default 200. */
+  status: number;
+  /** Default `text/plain; charset=utf-8`. */
+  content_type: string;
+  /** Up to 4 KB. Default empty. */
+  body: string;
+}
+
+/** Settings of a source. Which fields apply depends on the provider. */
+export interface SourceConfig {
+  /** Event type used when none can be read from the webhook. Default `inbound`. */
+  event_type?: string;
+  /** `hmac`, `basic`, `api_key` and `none`: the body field that holds the event type (`.` for nested fields, numbers for array items). */
+  event_type_field?: string;
+  /** `hmac`, `basic`, `api_key` and `none`: the header that identifies a delivery, used to drop duplicates. */
+  id_header?: string;
+  /** `hmac`: the signature header (required). `api_key`: the header that holds the key (set `header` or `query`). */
+  header?: string;
+  /** `api_key`: the query parameter that holds the key. */
+  query?: string;
+  /** `hmac`: only `sha256`. */
+  algorithm?: 'sha256';
+  /** `hmac`: default `hex`. */
+  encoding?: 'hex' | 'base64';
+  /**
+   * `hmac`: prefix removed from the header value before comparing, such as `sha256=`.
+   * `api_key`: prefix of the key header value, such as `Bearer `.
+   */
+  prefix?: string;
+  /** `meta`: compared with `hub.verify_token` when Meta checks the subscription (a `GET` to the URL). */
+  verify_token?: string;
+  /** `basic`: the user name (required). The password is the secret. */
+  username?: string;
+  /** Headers received that are passed on to the endpoints as they are (up to 20, lowercase). */
+  forward_headers?: string[];
+  /** What to answer when a webhook is accepted. Default 200 with an empty body. */
+  response?: SourceResponse;
+}
+
+export interface SourceRef {
+  id: string;
+  /** The source's name when the message was received. */
+  name: string;
+  /** The received request (`sreq_…`) the message was made from. */
+  request_id?: string;
+}
+
+/** Receives webhooks from another service at `url` and turns them into messages of one consumer. */
+export interface Source {
+  /** `src_…` */
+  id: string;
+  name: string;
+  provider: SourceProvider;
+  consumer_id: string;
+  consumer: ConsumerRef;
+  status: SourceStatus;
+  /** The URL to register with the sending service, such as `https://api.webhookadmin.com/in/…`. */
+  url: string;
+  /** Masked hint of the signing secret, or `null` when none is set. */
+  secret_hint: string | null;
+  config: SourceConfig;
+  /** Number of received webhooks held while the source is paused. */
+  held: number;
+  /** Unix milliseconds. */
+  created_at: number;
+  /** Unix milliseconds. */
+  updated_at: number;
+}
+
+export interface SourceCreateParams {
+  /** 1 to 100 characters. */
+  name: string;
+  provider: SourceProvider;
+  /** The consumer whose messages the received webhooks become. */
+  consumer_id: string;
+  /**
+   * The signing secret from the sending service. `standard` takes `whsec_` and base64; the others take printable ASCII
+   * without spaces. Only on create; use `setSecret()` later.
+   */
+  secret?: string;
+  config?: SourceConfig;
+  /** Default `active`. */
+  status?: SourceStatus;
+}
+
+export interface SourceUpdateParams {
+  name?: string;
+  /** Changing the provider removes the signing secret and, when `config` is omitted, resets the settings. */
+  provider?: SourceProvider;
+  consumer_id?: string;
+  status?: SourceStatus;
+  config?: SourceConfig;
+}
+
+export interface SourceListParams {
+  /** 1 to 100. Default 50. */
+  limit?: number;
+  cursor?: string;
+}
+
+/**
+ * `duplicate` means the service sent the same delivery again within 24 hours; the same message ID was returned.
+ * `held` means it was received while the source was paused; it is processed when the source is set back to `active`.
+ */
+export type SourceRequestStatus = 'accepted' | 'duplicate' | 'rejected' | 'held';
+
+/** One webhook a source received. Kept for your plan's retention. */
+export interface SourceRequest {
+  /** `sreq_…` */
+  id: string;
+  /** Unix milliseconds. */
+  at: number;
+  /** `POST`, `PUT`, `PATCH`, `DELETE` or `GET`. */
+  method: string;
+  status: SourceRequestStatus;
+  /** The status code returned to the sending service. */
+  response_status: number;
+  /** Why it was rejected (such as `invalid signature`), or a note such as `url_verification`. */
+  reason: string | null;
+  /** The message created, or `null`. */
+  message_id: string | null;
+  event_type: string | null;
+  content_type: string | null;
+  /** Body size in bytes. */
+  size: number;
+  /** Headers received, without credentials and cookies. */
+  headers: Record<string, string>;
+  /** Unix milliseconds when a held or rejected request was processed later, or `null`. */
+  processed_at: number | null;
+  /** `true` for a rejected request whose body was kept: `sources.reprocessRequest()` can process it again. */
+  reprocessable: boolean;
+}
+
+export interface SourceRequestListParams {
+  /** 1 to 100. Default 50. */
+  limit?: number;
+  cursor?: string;
+  /** Only requests with this status. */
+  status?: SourceRequestStatus;
 }
 
 /** Per-request options. */

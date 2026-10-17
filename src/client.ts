@@ -6,6 +6,7 @@ import { Endpoints } from './resources/endpoints';
 import { EventTypes } from './resources/event-types';
 import { Messages } from './resources/messages';
 import { Portal } from './resources/portal';
+import { Sources } from './resources/sources';
 import { readEnv } from './runtime';
 
 export const DEFAULT_BASE_URL = 'https://api.webhookadmin.com';
@@ -46,6 +47,7 @@ export class WebhookAdmin {
   readonly deliveries: Deliveries;
   readonly eventTypes: EventTypes;
   readonly portal: Portal;
+  readonly sources: Sources;
   readonly baseUrl: string;
 
   /**
@@ -64,5 +66,6 @@ export class WebhookAdmin {
     this.deliveries = new Deliveries(http);
     this.eventTypes = new EventTypes(http);
     this.portal = new Portal(http);
+    this.sources = new Sources(http);
   }
 }

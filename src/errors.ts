@@ -54,7 +54,10 @@ export class PlanLimitError extends WebhookAdminError {
   override name = 'PlanLimitError';
 }
 
-/** 409: conflicts with the current state (duplicate external_id, delivery still in progress). */
+/**
+ * 409: conflicts with the current state (duplicate external_id, delivery still in progress), or the endpoint is
+ * disabled (code `endpoint_disabled`: fix and re-enable it before retrying).
+ */
 export class ConflictError extends WebhookAdminError {
   override name = 'ConflictError';
 }

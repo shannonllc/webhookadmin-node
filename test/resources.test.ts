@@ -1,6 +1,6 @@
 // 全メソッドのメソッド・パス・クエリ・本文・返り。
 import { describe, expect, it } from 'vitest';
-import { ConflictError, ValidationError } from '../src/index';
+import { ConflictError, PlanLimitError, ValidationError } from '../src/index';
 import { client, empty, fakeFetch, json } from './helpers';
 
 const endpoint = {
@@ -124,6 +124,13 @@ describe('consumers', () => {
     await client(f.fn).consumers.list();
     expect(f.calls[0]!.url.search).toBe('?limit=5');
     expect(f.calls[1]!.url.search).toBe('');
+  });
+
+  it('delete', async () => {
+    const f = fakeFetch(new Response(null, { status: 204 }));
+    expect(await client(f.fn).consumers.delete('con_1/x')).toBeUndefined();
+    expect(f.calls[0]!.method).toBe('DELETE');
+    expect(f.calls[0]!.url.pathname).toBe('/v1/consumers/con_1%2Fx');
   });
 });
 
@@ -377,6 +384,51 @@ describe('endpoints', () => {
     expect(g.calls).toHaveLength(1);
   });
 
+  it('destinations: chat (slack, teams, chatwork) take credentials only or a room_id', async () => {
+    const slack = { ...endpoint, url: 'slack://T0001/B0001', type: 'slack', destination: { credentials_hint: 'T0001/B0001' } };
+    const chatwork = {
+      ...endpoint,
+      url: 'chatwork://rooms/123',
+      type: 'chatwork',
+      destination: { room_id: '123', credentials_hint: 'abcd…wxyz' },
+    };
+    const result = {
+      ok: true,
+      via: 'chatwork',
+      response_status: 200,
+      duration_ms: 40,
+      error: null,
+      response_head: null,
+      ref: '1234567890',
+    };
+    const f = fakeFetch(json(201, { ...slack, secret: 'whsec_x' }), json(201, { ...chatwork, secret: 'whsec_y' }), json(200, result));
+    const wh = client(f.fn);
+    const created = await wh.endpoints.create({
+      consumer_id: 'con_1',
+      type: 'slack',
+      destination: { credentials: { webhook_url: 'https://hooks.slack.com/services/T0001/B0001/xxxx' } },
+    });
+    expect(created.destination?.credentials_hint).toBe('T0001/B0001');
+    expect(
+      (
+        await wh.endpoints.create({
+          consumer_id: 'con_1',
+          type: 'chatwork',
+          destination: { room_id: '123', credentials: { api_token: 't' } },
+        })
+      ).url,
+    ).toBe('chatwork://rooms/123');
+    expect(
+      await wh.endpoints.testDestination({
+        type: 'teams',
+        destination: { credentials: { webhook_url: 'https://example.logic.azure.com/workflows/1' } },
+      }),
+    ).toEqual(result);
+    expect(f.calls[0]!.body).toMatchObject({ type: 'slack', destination: { credentials: { webhook_url: expect.any(String) } } });
+    expect(f.calls[1]!.body).toMatchObject({ type: 'chatwork', destination: { room_id: '123', credentials: { api_token: 't' } } });
+    expect(f.calls[2]!.body).toMatchObject({ type: 'teams' });
+  });
+
   it('recover: not retried on a 5xx (not safe to repeat)', async () => {
     const f = fakeFetch(json(503, { error: 'unavailable', message: 'x' }));
     await expect(client(f.fn).endpoints.recover('ep_1', { since: 1 })).rejects.toMatchObject({ status: 503 });
@@ -390,6 +442,178 @@ describe('deliveries', () => {
     expect(await client(f.fn).deliveries.retry('dlv_1')).toBeUndefined();
     expect(f.calls[0]).toMatchObject({ method: 'POST' });
     expect(f.calls[0]!.url.pathname).toBe('/v1/deliveries/dlv_1/retry');
+  });
+});
+
+describe('sources', () => {
+  const source = {
+    id: 'src_1',
+    name: 'Stripe',
+    provider: 'stripe',
+    consumer_id: 'con_1',
+    consumer: { id: 'con_1', external_id: 'internal', name: '' },
+    status: 'active',
+    url: 'https://api.test/in/abc',
+    secret_hint: 'whse…1234',
+    config: {},
+    held: 0,
+    created_at: 1,
+    updated_at: 1,
+  };
+  const request = {
+    id: 'sreq_1',
+    at: 2,
+    method: 'POST',
+    status: 'accepted',
+    response_status: 200,
+    reason: null,
+    message_id: 'msg_1',
+    event_type: 'invoice.paid',
+    content_type: 'application/json',
+    size: 10,
+    headers: { 'stripe-signature': 't=1,v1=x' },
+    processed_at: null,
+    reprocessable: false,
+  };
+
+  it('create / get / update / delete / setSecret', async () => {
+    const f = fakeFetch(
+      json(201, source),
+      json(200, source),
+      json(200, { ...source, status: 'paused' }),
+      empty(204),
+      json(200, source),
+      json(200, { ...source, secret_hint: null }),
+    );
+    const wh = client(f.fn);
+    const created = await wh.sources.create({
+      name: 'Stripe',
+      provider: 'stripe',
+      consumer_id: 'con_1',
+      secret: 'whsec_x',
+      config: { event_type: 'stripe.event' },
+    });
+    expect(created).toEqual(source);
+    expect(await wh.sources.get('src/1')).toEqual(source);
+    expect((await wh.sources.update('src_1', { status: 'paused', provider: 'hmac', config: { header: 'x-sig' } })).status).toBe('paused');
+    expect(await wh.sources.delete('src_1')).toBeUndefined();
+    expect((await wh.sources.setSecret('src_1', 'sk_x')).secret_hint).toBe('whse…1234');
+    expect((await wh.sources.setSecret('src_1', null)).secret_hint).toBeNull();
+    expect(f.calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
+      'POST /v1/sources',
+      'GET /v1/sources/src%2F1',
+      'PATCH /v1/sources/src_1',
+      'DELETE /v1/sources/src_1',
+      'PUT /v1/sources/src_1/secret',
+      'PUT /v1/sources/src_1/secret',
+    ]);
+    expect(f.calls[0]!.body).toEqual({
+      name: 'Stripe',
+      provider: 'stripe',
+      consumer_id: 'con_1',
+      secret: 'whsec_x',
+      config: { event_type: 'stripe.event' },
+    });
+    expect(f.calls[2]!.body).toEqual({ status: 'paused', provider: 'hmac', config: { header: 'x-sig' } });
+    expect(f.calls[4]!.body).toEqual({ secret: 'sk_x' });
+    expect(f.calls[5]!.body).toEqual({ secret: null });
+  });
+
+  it('list: query parameters, cursor, and every page with for await', async () => {
+    const page = json(200, { items: [source], next_cursor: 'n' });
+    const f = fakeFetch(page, page.clone(), json(200, { items: [source], next_cursor: null }));
+    const wh = client(f.fn);
+    expect(await wh.sources.list({ limit: 5, cursor: 'c' })).toEqual({ items: [source], next_cursor: 'n' });
+    expect(Object.fromEntries(f.calls[0]!.url.searchParams)).toEqual({ limit: '5', cursor: 'c' });
+    const all = [];
+    for await (const s of wh.sources.list()) all.push(s);
+    expect(all).toHaveLength(2);
+    expect(f.calls[1]!.url.search).toBe('');
+    expect(f.calls[2]!.url.search).toBe('?cursor=n');
+  });
+
+  it('listRequests: GET /v1/sources/:id/requests, paged', async () => {
+    const page = json(200, { items: [request], next_cursor: 'n' });
+    const f = fakeFetch(page, page.clone(), json(200, { items: [], next_cursor: null }));
+    const wh = client(f.fn);
+    expect(await wh.sources.listRequests('src_1', { limit: 1 })).toEqual({ items: [request], next_cursor: 'n' });
+    expect(f.calls[0]!.url.pathname).toBe('/v1/sources/src_1/requests');
+    expect(f.calls[0]!.url.search).toBe('?limit=1');
+    const all = [];
+    for await (const r of wh.sources.listRequests('src_1')) all.push(r);
+    expect(all).toEqual([request]);
+    expect(f.calls[1]!.url.search).toBe('');
+    expect(f.calls[2]!.url.search).toBe('?cursor=n');
+  });
+
+  it('listRequests: status filter', async () => {
+    const f = fakeFetch(json(200, { items: [{ ...request, status: 'held' }], next_cursor: null }));
+    const wh = client(f.fn);
+    const page = await wh.sources.listRequests('src_1', { status: 'held', limit: 10 });
+    expect(page.items[0]!.status).toBe('held');
+    expect(Object.fromEntries(f.calls[0]!.url.searchParams)).toEqual({ status: 'held', limit: '10' });
+  });
+
+  it('create / update: the settings of meta, zoom, basic and api_key, forwarded headers and the response', async () => {
+    const f = fakeFetch(json(201, { ...source, provider: 'api_key', held: 2 }), json(200, source));
+    const wh = client(f.fn);
+    const config = {
+      header: 'authorization',
+      prefix: 'Bearer ',
+      query: 'key',
+      verify_token: 'vt',
+      username: 'user',
+      forward_headers: ['x-request-id'],
+      response: { status: 202, content_type: 'application/json', body: '{"ok":true}' },
+    };
+    const created = await wh.sources.create({ name: 'k', provider: 'api_key', consumer_id: 'con_1', secret: 'key', config });
+    expect(created.held).toBe(2);
+    await wh.sources.update('src_1', { provider: 'meta', config: { verify_token: 'vt' } });
+    expect(f.calls[0]!.body).toEqual({ name: 'k', provider: 'api_key', consumer_id: 'con_1', secret: 'key', config });
+    expect(f.calls[1]!.body).toEqual({ provider: 'meta', config: { verify_token: 'vt' } });
+  });
+
+  it('reprocessRequest: POST /v1/sources/:id/requests/:rid/reprocess, not retried on a 5xx', async () => {
+    const done = { ...request, status: 'accepted', processed_at: 3, reprocessable: false };
+    const f = fakeFetch(json(200, done));
+    const wh = client(f.fn);
+    expect(await wh.sources.reprocessRequest('src/1', 'sreq/1')).toEqual(done);
+    expect(`${f.calls[0]!.method} ${f.calls[0]!.url.pathname}`).toBe('POST /v1/sources/src%2F1/requests/sreq%2F1/reprocess');
+    expect(f.calls[0]!.body).toBeUndefined();
+    const c = fakeFetch(json(503, { error: 'unavailable', message: 'x' }));
+    await expect(client(c.fn, { maxRetries: 1 }).sources.reprocessRequest('src_1', 'sreq_1')).rejects.toMatchObject({ status: 503 });
+    expect(c.calls).toHaveLength(1);
+    const n = fakeFetch(json(409, { error: 'conflict', message: 'x' }));
+    await expect(client(n.fn).sources.reprocessRequest('src_1', 'sreq_1')).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('create: not retried on a 5xx; over the plan limit is PlanLimitError', async () => {
+    const c = fakeFetch(json(503, { error: 'unavailable', message: 'x' }));
+    await expect(
+      client(c.fn, { maxRetries: 1 }).sources.create({ name: 'a', provider: 'none', consumer_id: 'con_1' }),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(c.calls).toHaveLength(1);
+    const p = fakeFetch(json(402, { error: 'plan_limit', message: 'x', fields: { sources: 'up to 1' } }));
+    const e = await client(p.fn)
+      .sources.create({ name: 'a', provider: 'none', consumer_id: 'con_1' })
+      .catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(PlanLimitError);
+    expect((e as PlanLimitError).fields).toEqual({ sources: 'up to 1' });
+  });
+
+  it('get / update / delete / setSecret / listRequests are retried on a 5xx', async () => {
+    const calls = [
+      (w: ReturnType<typeof client>) => w.sources.get('src_1'),
+      (w: ReturnType<typeof client>) => w.sources.update('src_1', { name: 'b' }),
+      (w: ReturnType<typeof client>) => w.sources.delete('src_1'),
+      (w: ReturnType<typeof client>) => w.sources.setSecret('src_1', 'x'),
+      async (w: ReturnType<typeof client>) => await w.sources.listRequests('src_1'),
+    ];
+    for (const call of calls) {
+      const f = fakeFetch(json(503, { error: 'unavailable', message: 'x' }), json(200, { items: [], next_cursor: null }));
+      await call(client(f.fn, { maxRetries: 1 }));
+      expect(f.calls).toHaveLength(2);
+    }
   });
 });
 

@@ -95,6 +95,7 @@ export async function POST(req: Request) {
 | `deliveries.retry(id)` | `POST /v1/deliveries/:id/retry` |
 | `consumers.create({ external_id, name? })` | `POST /v1/consumers` |
 | `consumers.list({ limit?, cursor? })` | `GET /v1/consumers` |
+| `consumers.delete(id)` | `DELETE /v1/consumers/:id` |
 | `endpoints.create({ consumer_id, type?, url?, destination?, event_types?, fixed_ip?, description?, retry?, compat_signature?, ordering?, body_format?, secret? })` | `POST /v1/endpoints` |
 | `endpoints.list({ consumer_id? })` | `GET /v1/endpoints` |
 | `endpoints.get(id)` | `GET /v1/endpoints/:id` |
@@ -116,6 +117,14 @@ export async function POST(req: Request) {
 | `eventTypes.list()` | `GET /v1/event-types` |
 | `eventTypes.create({ name, description? })` | `POST /v1/event-types` |
 | `eventTypes.ensure([name or { name, description? }, …])` | `GET` and `POST /v1/event-types` |
+| `sources.create({ name, provider, consumer_id, secret?, config?, status? })` | `POST /v1/sources` |
+| `sources.list({ limit?, cursor? })` | `GET /v1/sources` |
+| `sources.get(id)` | `GET /v1/sources/:id` |
+| `sources.update(id, { name?, provider?, consumer_id?, status?, config? })` | `PATCH /v1/sources/:id` |
+| `sources.delete(id)` | `DELETE /v1/sources/:id` |
+| `sources.setSecret(id, secret or null)` | `PUT /v1/sources/:id/secret` |
+| `sources.listRequests(id, { limit?, cursor?, status? })` | `GET /v1/sources/:id/requests` |
+| `sources.reprocessRequest(id, requestId)` | `POST /v1/sources/:id/requests/:request_id/reprocess` |
 
 Every method also takes request options as the last argument: `{ timeout?, maxRetries?, signal? }`.
 
@@ -207,6 +216,43 @@ await wha.endpoints.create({ consumer_id: 'con_...', url: 'https://example.com/w
 
 `secret` is `whsec_` and standard base64 of 24 to 75 bytes, and only on create (use `rotateSecret()` later). With `body_format: 'raw'` the signature covers that raw body; the default `standard` sends `{ type, timestamp, data }`.
 
+### Sources (receiving webhooks from other services)
+
+A source gives you a URL to register with another service. Webhooks it receives are verified and become messages of the consumer you choose, delivered to that consumer's endpoints with the same retries, ordering and transformations as `messages.send()`.
+
+```ts
+const source = await wha.sources.create({
+  name: 'Stripe',
+  provider: 'stripe', // stripe, github, shopify, slack, meta, zoom, standard, hmac, basic, api_key or none
+  consumer_id: 'con_...',
+  secret: 'whsec_...', // the signing secret from the service
+});
+console.log(source.url); // https://api.webhookadmin.com/in/... — register this URL with the service
+
+await wha.sources.setSecret(source.id, 'whsec_new...'); // the previous secret is still accepted for 24 hours
+for await (const r of wha.sources.listRequests(source.id)) {
+  console.log(r.method, r.status, r.event_type, r.reason); // accepted, duplicate, rejected or held, newest first
+}
+
+// After fixing a wrong secret, process the rejected webhooks again
+for await (const r of wha.sources.listRequests(source.id, { status: 'rejected' })) {
+  if (r.reprocessable) await wha.sources.reprocessRequest(source.id, r.id);
+}
+```
+
+The URL accepts `POST`, `PUT`, `PATCH` and `DELETE` with a body of up to 10 MB. Settings in `config` depend on the provider:
+
+| Provider | `config` |
+|---|---|
+| `hmac` | `{ header: 'x-signature', encoding: 'hex', prefix: 'sha256=' }` (`header` is required) |
+| `basic` | `{ username: 'user' }` (the secret is the password) |
+| `api_key` | `{ header: 'authorization', prefix: 'Bearer ' }` or `{ query: 'key' }` (the secret is the key) |
+| `meta` | `{ verify_token: '...' }`, answered when Meta checks the subscription |
+
+For `hmac`, `basic`, `api_key` and `none`, `config.event_type_field` reads the event type from a body field and `config.id_header` drops duplicate deliveries. For every provider, `config.forward_headers` passes received headers on to the endpoints (up to 20), and `config.response` sets the reply when a webhook is accepted (`{ status: 202, content_type: 'application/json', body: '{"ok":true}' }`).
+
+A paused source still accepts webhooks and holds them (`status: 'held'`, counted in `source.held`); they become messages when you set it back to `active`. Changing `provider` removes the secret. The number of sources depends on your plan (`PlanLimitError` over it). `messages.get()` returns `source: { id, name, request_id }` for messages received this way.
+
 ### Pagination
 
 `list()` returns the first page when awaited, and every item across pages with `for await`.
@@ -228,7 +274,7 @@ for await (const message of wha.messages.list({ status: 'failed' })) {
 | `NotFoundError` | 404 |
 | `ValidationError` | 400, 413, 422 |
 | `PlanLimitError` | 402 |
-| `ConflictError` | 409 |
+| `ConflictError` | 409 (`code` is `endpoint_disabled` when retrying, testing or bulk-resending to a disabled endpoint: fix it and set `status: 'active'` first) |
 | `RateLimitError` | 429 |
 | `ApiError` | other, including 5xx |
 | `ConnectionError` | no response |
@@ -251,7 +297,7 @@ try {
 | Response | Retried |
 |---|---|
 | 429 | Always. Waits for `retry-after`, or until `x-ratelimit-reset`. |
-| 5xx, network error, timeout | Only requests that are safe to repeat: `GET`, `PATCH`, `DELETE`, `messages.send`, `portal.createLink` |
+| 5xx, network error, timeout | Only requests that are safe to repeat: `GET`, `PUT`, `PATCH`, `DELETE`, `messages.send`, `portal.createLink` |
 | Other 4xx | Never |
 
 Backoff starts at 0.5 s, doubles up to 8 s, with ±25% jitter. `messages.send` generates an `Idempotency-Key` when you omit it and sends the same key on every retry, so a retried send is delivered once. Keys are kept for 24 hours.

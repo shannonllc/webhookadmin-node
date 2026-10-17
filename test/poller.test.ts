@@ -1,4 +1,4 @@
-// 取りに来る送信先の読み手（Poller）: トークンで GET /v1/poller/{id}、iterator を渡して続きを読む、done で止まる。
+// ポーリングの送信先の読み手（Poller）: トークンで GET /v1/poller/{id}、iterator を渡して続きを読む、done で止まる。
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthenticationError, Poller, type PollerOptions, VERSION, WebhookAdminError } from '../src/index';
 import { fakeFetch, json } from './helpers';

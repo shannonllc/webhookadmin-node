@@ -22,6 +22,7 @@ export type { Endpoints } from './resources/endpoints';
 export type { EventTypes } from './resources/event-types';
 export type { Messages } from './resources/messages';
 export type { Portal } from './resources/portal';
+export type { Sources } from './resources/sources';
 export type * from './types';
 export { VERSION } from './version';
 export { Webhook, type WebhookEvent, type WebhookHeaders, type WebhookOptions, type WebhookPayload } from './webhook';
