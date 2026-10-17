@@ -13,10 +13,11 @@ export type HttpConfig = {
   fetch: Fetch;
 };
 
-export type Query = Record<string, string | number | undefined>;
+/** An array value is sent as the same key repeated. */
+export type Query = Record<string, string | number | readonly string[] | undefined>;
 
 export type HttpRequest = {
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
   query?: Query;
   body?: unknown;
@@ -52,6 +53,7 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise((resolve, reject) => {
     const onAbort = () => {
       clearTimeout(t);
+      // cond-ignore(signal): onAbort は signal があるときだけ登録する（下の addEventListener）
       reject(new ConnectionError('Request was aborted', { cause: signal?.reason }));
     };
     const t = setTimeout(() => {
@@ -69,7 +71,10 @@ export class Http {
 
   url(path: string, query: Query = {}): string {
     const qs = new URLSearchParams();
-    for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== '') qs.set(k, String(v));
+    for (const [k, v] of Object.entries(query)) {
+      if (Array.isArray(v)) for (const x of v) qs.append(k, x);
+      else if (v !== undefined && v !== '') qs.set(k, String(v));
+    }
     const s = qs.toString();
     return `${this.config.baseUrl}${path}${s ? `?${s}` : ''}`;
   }

@@ -66,7 +66,7 @@ describe('client options', () => {
     expect(wh.baseUrl).toBe('https://api.webhookadmin.com');
     await wh.consumers.list();
     expect(f.calls[0]!.url.href).toBe('https://api.webhookadmin.com/v1/consumers');
-    expect(new WebhookAdmin('sk_test_x', { baseUrl: 'http://localhost:8787//', fetch: f.fn }).baseUrl).toBe('http://localhost:8787');
+    expect(new WebhookAdmin('sk_test_x', { baseUrl: 'http://api.example.test//', fetch: f.fn }).baseUrl).toBe('http://api.example.test');
   });
 
   it('uses globalThis.fetch by default, called without a this binding', async () => {
@@ -130,6 +130,14 @@ describe('errors', () => {
     expect(e2).toMatchObject({ status: 400, message: 'HTTP 400' });
   });
 
+  it('a JSON error body that is not an object, or fields that are not an object, is ignored', async () => {
+    const f = fakeFetch(new Response('"oops"', { status: 500 }), json(422, { error: 'validation_failed', message: 'bad', fields: 'url' }));
+    const wh = client(f.fn, { maxRetries: 0 });
+    expect(await wh.messages.get('m').catch((x) => x)).toMatchObject({ status: 500, code: undefined, message: 'HTTP 500' });
+    const e = (await wh.messages.get('m').catch((x) => x)) as ValidationError;
+    expect(e).toMatchObject({ status: 422, code: 'validation_failed', message: 'bad', fields: undefined });
+  });
+
   it('invalid JSON in a 2xx response is an ApiError and is not retried', async () => {
     const f = fakeFetch(new Response('{oops', { status: 200, headers: { 'cf-ray': 'r2' } }));
     const e = (await client(f.fn)
@@ -190,6 +198,13 @@ describe('retries', () => {
     const r = await settle(client(f.fn, { maxRetries: 3 }).messages.get('m'));
     expect(r.error).toBeInstanceOf(ApiError);
     expect(f.calls).toHaveLength(4);
+  });
+
+  it('a signal that is never aborted does not stop the retries', async () => {
+    const f = fakeFetch(json(503, {}), json(200, { id: 'msg_1' }));
+    const r = await settle(client(f.fn).messages.get('msg_1', { signal: new AbortController().signal }));
+    expect(r.value).toEqual({ id: 'msg_1' });
+    expect(f.calls).toHaveLength(2);
   });
 
   it('maxRetries per request overrides the client', async () => {

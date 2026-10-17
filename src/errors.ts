@@ -17,7 +17,7 @@ export class WebhookAdminError extends Error {
   readonly code: string | undefined;
   /** Per-field messages for validation errors. */
   readonly fields: Record<string, string> | undefined;
-  /** Request ID (`x-request-id`, or Cloudflare's `cf-ray`) to quote when contacting support. */
+  /** Request ID to quote when contacting support. */
   readonly requestId: string | undefined;
 
   constructor(message: string, options: ErrorOptions = {}) {

@@ -63,7 +63,16 @@ try {
   const out = execFileSync('npm', ['pack', '--json', '--pack-destination', work], { cwd: pkgDir, encoding: 'utf8' });
   const [info] = JSON.parse(out);
   const files = info.files.map((f) => f.path).sort();
-  const expected = ['LICENSE', 'README.md', 'dist/index.cjs', 'dist/index.d.cts', 'dist/index.d.ts', 'dist/index.js', 'package.json'];
+  const expected = [
+    'CHANGELOG.md',
+    'LICENSE',
+    'README.md',
+    'dist/index.cjs',
+    'dist/index.d.cts',
+    'dist/index.d.ts',
+    'dist/index.js',
+    'package.json',
+  ];
   if (JSON.stringify(files) !== JSON.stringify(expected)) fail(`files in the tarball: ${files.join(', ')}`);
   const tgz = join(work, info.filename);
 
