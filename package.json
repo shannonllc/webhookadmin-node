@@ -54,11 +54,11 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "@vitest/coverage-istanbul": "^4.1.11",
+    "@vitest/coverage-istanbul": "^4.1.12",
     "miniflare": "5.20260925.0-alpha",
     "standardwebhooks": "^1.1.1",
     "tsup": "^8.5.1",
     "typescript": "^5.9.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }

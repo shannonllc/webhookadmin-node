@@ -12,3 +12,6 @@ overrides:
   'source-map-js@>=1.0.0 <1.2.2': ^1.2.2
   # tsup・vite が使う版（Windows の開発サーバーだけの弱点）
   'esbuild@>=0.27.3 <0.28.1': ^0.28.1
+  # 2026-10-22 の警告（開発用。vite の開発サーバーと vitest のモック）
+  vite: ^8.3.3
+  '@vitest/mocker@<4.1.12': ^4.1.12
