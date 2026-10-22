@@ -49,10 +49,12 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
     "test": "vitest run --coverage && tsup && node scripts/pack-check.mjs",
     "prepublishOnly": "pnpm typecheck && vitest run --coverage && tsup && node scripts/pack-check.mjs"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.15",
     "@types/node": "^24.0.0",
     "@vitest/coverage-istanbul": "^4.1.12",
     "miniflare": "5.20260925.0-alpha",
