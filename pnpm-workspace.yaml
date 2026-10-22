@@ -3,3 +3,12 @@ allowBuilds:
   workerd: true
 minimumReleaseAgeExclude:
   - miniflare@5.20260925.0-alpha
+# Dependabot の警告（すべて開発用。公開するパッケージは依存を持たないので利用者には入らない）
+overrides:
+  # miniflare が固定で持つ版
+  'sharp@<0.35.5': ^0.35.5
+  'undici@>=7.0.0 <7.29.1': ^7.29.1
+  # magicast・postcss が持つ版
+  'source-map-js@>=1.0.0 <1.2.2': ^1.2.2
+  # tsup・vite が使う版（Windows の開発サーバーだけの弱点）
+  'esbuild@>=0.27.3 <0.28.1': ^0.28.1
